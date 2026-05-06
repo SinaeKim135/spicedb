@@ -167,12 +167,73 @@ func (ps *permissionServer) CheckPermission(ctx context.Context, req *v1.CheckPe
 
 	permissionship, partialCaveat := checkResultToAPITypes(cr)
 
+	// When the answer is NO_PERMISSION and the caller did not opt into a
+	// full trace (WithTracing / debug header), fill the existing DebugTrace
+	// field with a minimal, support-friendly hint about the deny.
+	//
+	// Why: Notion/Carta-style support workflows ask "why can't I see this?"
+	// today the API returns only the Permissionship enum, so support has to
+	// re-issue the call with WithTracing=true (heavier, separate round-trip).
+	// A small hint embedded in the existing DebugTrace lets a first-line
+	// agent diagnose the most common causes (no matching relation, caveat
+	// denied, subject mismatch) without a follow-up call. We only populate
+	// when DebugTrace is otherwise nil so the explicit-tracing path is
+	// untouched.
+	if debugTrace == nil && permissionship == v1.CheckPermissionResponse_PERMISSIONSHIP_NO_PERMISSION {
+		debugTrace = buildDenyHintTrace(req, partialCaveat)
+	}
+
 	return &v1.CheckPermissionResponse{
 		CheckedAt:         checkedAt,
 		Permissionship:    permissionship,
 		PartialCaveatInfo: partialCaveat,
 		DebugTrace:        debugTrace,
 	}, nil
+}
+
+// buildDenyHintTrace produces a small DebugInformation describing why a
+// permission check returned NO_PERMISSION. It carries the request echo
+// (resource / permission / subject) plus a short, human-readable Source
+// string that points the operator at the most likely cause without
+// running a full trace pass. SchemaUsed is intentionally left empty —
+// loading the schema for every deny would defeat the lightweight goal,
+// and callers who need it can re-issue with WithTracing=true.
+func buildDenyHintTrace(req *v1.CheckPermissionRequest, partialCaveat *v1.PartialCaveatInfo) *v1.DebugInformation {
+	subjectStr := req.Subject.Object.ObjectType + ":" + req.Subject.Object.ObjectId
+	if rel := req.Subject.OptionalRelation; rel != "" {
+		subjectStr += "#" + rel
+	}
+	resourceStr := req.Resource.ObjectType + ":" + req.Resource.ObjectId
+
+	source := "deny: no path from subject " + subjectStr +
+		" to permission '" + req.Permission + "' on resource " + resourceStr +
+		"; common causes: missing relationship, caveat denied, or subject type mismatch"
+
+	if partialCaveat != nil && len(partialCaveat.MissingRequiredContext) > 0 {
+		source = "deny: caveat for permission '" + req.Permission +
+			"' on resource " + resourceStr +
+			" was not satisfied (missing required context fields: " +
+			strings.Join(partialCaveat.MissingRequiredContext, ", ") + ")"
+	}
+
+	return &v1.DebugInformation{
+		Check: &v1.CheckDebugTrace{
+			Resource: &v1.ObjectReference{
+				ObjectType: req.Resource.ObjectType,
+				ObjectId:   req.Resource.ObjectId,
+			},
+			Permission: req.Permission,
+			Subject: &v1.SubjectReference{
+				Object: &v1.ObjectReference{
+					ObjectType: req.Subject.Object.ObjectType,
+					ObjectId:   req.Subject.Object.ObjectId,
+				},
+				OptionalRelation: req.Subject.OptionalRelation,
+			},
+			Result: v1.CheckDebugTrace_PERMISSIONSHIP_NO_PERMISSION,
+			Source: source,
+		},
+	}
 }
 
 func checkResultToAPITypes(cr *dispatch.ResourceCheckResult) (v1.CheckPermissionResponse_Permissionship, *v1.PartialCaveatInfo) {
