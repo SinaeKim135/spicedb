@@ -65,8 +65,12 @@ jobs:
         env:
           SKYRAMP_TEST_TOKEN: ${{ env.SKYRAMP_TEST_TOKEN }}
         with:
-          skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE }}
-          anthropicApiKey: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Secret names match what the Skyramp installer auto-provisions
+          # at testbot.skyramp.dev (mealie also uses this naming). The
+          # README shows SKYRAMP_LICENSE / ANTHROPIC_API_KEY, but those
+          # aren't what gets created when you go through the installer.
+          skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE_FILE }}
+          anthropicApiKey: ${{ secrets.SKYRAMP_TESTBOT_API_KEY }}
           testDirectory: tests
 
           # Idempotent re-invocation of the pre-step's startup script.
