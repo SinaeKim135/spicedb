@@ -81,6 +81,42 @@ jobs:
           # targetSetupCommand below re-invokes it as a no-op once healthy.
           bash .skyramp/start-spicedb.sh
 
+          # Diagnostics following Skyramp Testbot's Run 5 next-steps recipe
+          # (PR #3 sticky comment), so we can confirm in CI logs whether the
+          # binary actually carries the PR's parser/compiler/generator
+          # changes — and not silently serve stale code from a Docker layer
+          # cache. Each `|| true` keeps the workflow green even if a probe
+          # fails; the goal is observability, not gating.
+          echo "================================================================"
+          echo "[diagnostic] Step 1 — image build timestamp + SHA"
+          echo "================================================================"
+          docker images --no-trunc --format 'table {{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}\t{{.ID}}' | grep -E 'spicedb|REPOSITORY' || true
+          echo
+          echo "================================================================"
+          echo "[diagnostic] Step 3a — spicedb binary version inside container"
+          echo "================================================================"
+          docker exec spicedb-testbot /usr/local/bin/spicedb version 2>&1 || echo "(version probe failed — binary may not support 'version' subcommand)"
+          echo
+          echo "================================================================"
+          echo "[diagnostic] Step 3b — does the binary literally contain the new"
+          echo "    'relation-description' AST predicate (proves PR code is in)"
+          echo "================================================================"
+          docker exec spicedb-testbot sh -c "strings /usr/local/bin/spicedb 2>/dev/null | grep -c relation-description" 2>&1 || echo "(strings probe failed — busybox may lack 'strings'; non-fatal)"
+          echo
+          echo "================================================================"
+          echo "[diagnostic] Step 3c — round-trip 'description' keyword against"
+          echo "    the running server. 200 = parser knows it, 400 = stale binary"
+          echo "================================================================"
+          curl -sS -o /tmp/probe.json -w "HTTP %{http_code}\n" \
+            -X POST http://localhost:8443/v1/schema/write \
+            -H 'Authorization: Bearer super-secret-key' \
+            -H 'Content-Type: application/json' \
+            -d '{"schema": "definition probe_user {}\ndefinition probe_doc {\n  relation viewer: probe_user description \"diag\"\n}"}' || true
+          echo "Response body (truncated):"
+          head -c 500 /tmp/probe.json 2>/dev/null || true
+          echo
+          echo "================================================================"
+
           # Preshared key is static config; pre-step value matches the
           # action's runtime value, no JWT lifecycle to worry about.
           SKYRAMP_TEST_TOKEN="$(bash .skyramp/get-token.sh)"

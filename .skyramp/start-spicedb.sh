@@ -26,8 +26,18 @@ if curl -fsS "${HEALTH_URL}" >/dev/null 2>&1; then
   exit 0
 fi
 
-echo "[skyramp] starting spicedb via ${COMPOSE_FILE} (build from PR source)"
-docker compose -f "${COMPOSE_FILE}" up -d --build
+echo "[skyramp] starting spicedb via ${COMPOSE_FILE} (build from PR source, --no-cache)"
+# --no-cache forces docker buildx to ignore any layer cache it might
+# have inherited from a registry mirror or previous run. Without this,
+# the COPY . . layer can be served from cache when the build context
+# digest happens to match a prior PR's, and the binary inside the
+# container ends up compiled from older source — the exact symptom
+# Skyramp's testbot flagged when 3 of 4 integration tests on PR #3
+# kept failing with HTTP 400 parse errors despite docker compose down.
+# The cost is ~3-5 min of extra Go compile per CI run, which is
+# acceptable in exchange for guaranteed fresh code.
+docker compose -f "${COMPOSE_FILE}" build --no-cache spicedb
+docker compose -f "${COMPOSE_FILE}" up -d
 
 echo "[skyramp] waiting up to ${MAX_WAIT_SECONDS}s for ${HEALTH_URL}"
 deadline=$(( $(date +%s) + MAX_WAIT_SECONDS ))
