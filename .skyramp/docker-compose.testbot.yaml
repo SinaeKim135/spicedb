@@ -1,0 +1,28 @@
+---
+# Slim compose for Skyramp TestBot.
+# Builds spicedb from the current PR source (no upstream image), strips the
+# observability stack from docker-compose.memdb.yaml so boots in seconds.
+services:
+  spicedb:
+    container_name: spicedb-testbot
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - "serve"
+      - "--datastore-engine=memory"
+    ports:
+      - "50051:50051"
+      - "8443:8443"
+    environment:
+      - SPICEDB_LOG_FORMAT=json
+      - SPICEDB_LOG_LEVEL=info
+      - SPICEDB_HTTP_ENABLED=true
+      - SPICEDB_GRPC_PRESHARED_KEY=super-secret-key
+      - SPICEDB_TELEMETRY_ENDPOINT=
+    restart: "no"
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=localhost:50051"]
+      interval: "5s"
+      timeout: "10s"
+      retries: 6

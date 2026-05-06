@@ -1,0 +1,12 @@
+services:
+  - serviceName: spicedb
+    testDirectory: tests
+    language: go
+    framework: gotest
+    runtimeDetails:
+      serverStartCommand: "bash .skyramp/start-spicedb.sh"
+      runtime: local
+    api:
+      baseUrl: http://localhost:8443
+      authHeader: Authorization
+      authType: bearer

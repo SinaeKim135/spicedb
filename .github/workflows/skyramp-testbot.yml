@@ -1,0 +1,91 @@
+name: Skyramp Testbot
+
+# Follows the official skyramp/testbot README pattern (2 secrets + optional
+# PAT for retriggering CI). Mealie's variant in this org uses a GitHub App
+# token instead — that's a legacy approach; PAT_TOKEN is the documented one.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      # Go source — anything that affects the running binary
+      - 'cmd/**'
+      - 'internal/**'
+      - 'pkg/**'
+      - 'proto/**'
+      - 'go.mod'
+      - 'go.sum'
+      # Container build inputs
+      - 'Dockerfile'
+      # Skyramp wiring
+      - '.skyramp/**'
+      - 'tests/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.actor != 'skyramp-testbot[bot]' }}
+
+jobs:
+  testbot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use PAT (if configured) so Testbot's auto-commits trigger this
+          # workflow again — required to demo the "TestBot maintains its own
+          # tests on subsequent PRs" loop. Falls back to GITHUB_TOKEN if no
+          # PAT is set, in which case auto-commits won't retrigger CI.
+          token: ${{ secrets.PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Start SpiceDB and stage preshared key
+        run: |
+          set -euo pipefail
+          # Build spicedb from PR source (slim memdb compose) and wait for
+          # /openapi.json. start-spicedb.sh is idempotent — the action's
+          # targetSetupCommand below re-invokes it as a no-op once healthy.
+          bash .skyramp/start-spicedb.sh
+
+          # Preshared key is static config; pre-step value matches the
+          # action's runtime value, no JWT lifecycle to worry about.
+          SKYRAMP_TEST_TOKEN="$(bash .skyramp/get-token.sh)"
+          if [[ -z "${SKYRAMP_TEST_TOKEN}" ]]; then
+            echo "Failed to obtain SpiceDB preshared key" >&2
+            exit 1
+          fi
+          echo "::add-mask::${SKYRAMP_TEST_TOKEN}"
+          echo "SKYRAMP_TEST_TOKEN=${SKYRAMP_TEST_TOKEN}" >> "${GITHUB_ENV}"
+
+      - uses: skyramp/testbot@v0.8.2
+        env:
+          SKYRAMP_TEST_TOKEN: ${{ env.SKYRAMP_TEST_TOKEN }}
+        with:
+          skyrampLicenseFile: ${{ secrets.SKYRAMP_LICENSE }}
+          anthropicApiKey: ${{ secrets.ANTHROPIC_API_KEY }}
+          testDirectory: tests
+
+          # Idempotent re-invocation of the pre-step's startup script.
+          # start-spicedb.sh fast-paths when /openapi.json is already healthy,
+          # so this is effectively a no-op while keeping the action's
+          # lifecycle hooks intact.
+          targetSetupCommand: |
+            set -euo pipefail
+            bash .skyramp/start-spicedb.sh
+
+          targetReadyCheckCommand: |
+            curl -fsS http://localhost:8443/openapi.json > /dev/null
+
+          # First build is Go compile-heavy (~3-5 min, no cache). Subsequent
+          # PR runs ride the docker layer cache and finish in <60s.
+          targetReadyCheckTimeout: '300'
+
+          # Backup token fetch in case the executor needs to refresh during
+          # the run. Same script as the pre-step so semantics match.
+          authTokenCommand: "bash .skyramp/get-token.sh"
+
+          skipTargetTeardown: 'true'
