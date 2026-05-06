@@ -20,6 +20,17 @@ func TestNewSourceGenerator(t *testing.T) {
 	require.True(t, mm.flags.IsEmpty())
 }
 
+// mustRelationWithDescription builds a relation and attaches a description to
+// it via the namespace metadata helper. Test-only convenience to keep the
+// generator test cases compact.
+func mustRelationWithDescription(name string, description string, allowedRelations ...*core.AllowedRelation) *core.Relation {
+	rel := namespace.MustRelation(name, nil, allowedRelations...)
+	if err := namespace.SetDescription(rel, description); err != nil {
+		panic(err)
+	}
+	return rel
+}
+
 func TestGenerateCaveat(t *testing.T) {
 	type generatorTest struct {
 		name     string
@@ -104,6 +115,34 @@ func TestGenerateNamespace(t *testing.T) {
 			),
 			`definition foos/test {
 	relation somerel: foos/bars#hiya
+}`,
+			true,
+		},
+		{
+			"relation with description",
+			namespace.Namespace("foos/test",
+				mustRelationWithDescription(
+					"viewer",
+					"Users who can read this document",
+					namespace.AllowedRelation("foos/user", ""),
+				),
+			),
+			`definition foos/test {
+	relation viewer: foos/user description "Users who can read this document"
+}`,
+			true,
+		},
+		{
+			"relation with description containing quotes",
+			namespace.Namespace("foos/test",
+				mustRelationWithDescription(
+					"editor",
+					`Allowed to "modify" the document`,
+					namespace.AllowedRelation("foos/user", ""),
+				),
+			),
+			`definition foos/test {
+	relation editor: foos/user description "Allowed to \"modify\" the document"
 }`,
 			true,
 		},
@@ -261,6 +300,26 @@ func TestFormatting(t *testing.T) {
 			"empty",
 			"definition foos/test {}",
 			"definition foos/test {}",
+		},
+		{
+			"relation with description round-trips through compile",
+			`definition foos/test {
+				relation viewer: foos/user description "Read access"
+			}`,
+			`definition foos/test {
+	relation viewer: foos/user description "Read access"
+}`,
+		},
+		{
+			"relation with description and a leading comment keeps both",
+			`definition foos/test {
+				// owner of the doc
+				relation viewer: foos/user description "Read access"
+			}`,
+			`definition foos/test {
+	// owner of the doc
+	relation viewer: foos/user description "Read access"
+}`,
 		},
 		{
 			"with comment",

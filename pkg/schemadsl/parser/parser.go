@@ -367,6 +367,7 @@ func (p *sourceParser) consumeDefinitionOrPartialImpl(node AstNode) AstNode {
 
 // consumeRelation consumes a relation.
 // ```relation foo: sometype```
+// ```relation foo: sometype description "human-readable text"```
 func (p *sourceParser) consumeRelation() AstNode {
 	relNode := p.startNode(dslshape.NodeTypeRelation)
 	defer p.mustFinishNode()
@@ -388,6 +389,18 @@ func (p *sourceParser) consumeRelation() AstNode {
 
 	// Relation allowed type(s).
 	relNode.Connect(dslshape.NodeRelationPredicateAllowedTypes, p.consumeTypeReference())
+
+	// Optional `description "..."` clause. `description` is a soft keyword —
+	// only treated specially when it appears after the type reference and
+	// before the statement terminator. A relation literally named
+	// `description` is still allowed (the name is consumed before this point).
+	if p.isIdentifier("description") {
+		p.consumeIdentifier()
+		descValue, ok := p.consumeStringLiteral()
+		if ok {
+			relNode.MustDecorate(dslshape.NodeRelationPredicateDescription, descValue)
+		}
+	}
 
 	return relNode
 }

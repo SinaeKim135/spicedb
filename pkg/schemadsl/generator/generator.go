@@ -258,6 +258,15 @@ func (sg *sourceGenerator) emitRelation(relation *core.Relation) error {
 				sg.emitAllowedRelation(allowedRelation)
 			}
 		}
+
+		// Emit the optional `description "..."` clause after the type list.
+		// Permissions don't carry a description in the current DSL surface —
+		// keep the emission relation-only to mirror the parser.
+		if description := namespace.GetDescription(relation); description != "" {
+			sg.append(` description "`)
+			sg.append(escapeDescription(description))
+			sg.append(`"`)
+		}
 	}
 
 	if relation.UsersetRewrite != nil {
@@ -267,6 +276,15 @@ func (sg *sourceGenerator) emitRelation(relation *core.Relation) error {
 
 	sg.appendLine()
 	return nil
+}
+
+// escapeDescription escapes characters that would break the generated
+// `description "..."` string literal. Mirrors the lexer's double-quote
+// delimited form.
+func escapeDescription(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
 
 func (sg *sourceGenerator) emitAllowedRelation(allowedRelation *core.AllowedRelation) {
@@ -397,11 +415,23 @@ func (sg *sourceGenerator) mustEmitSetOpChild(setOpChild *core.SetOperation_Chil
 }
 
 func (sg *sourceGenerator) emitComments(metadata *core.Metadata) {
-	if len(namespace.GetComments(metadata)) > 0 {
+	// `description "..."` is stored as a marker-prefixed DocComment so that
+	// schemas survive proto round-trips without a new metadata type. The
+	// generator emits descriptions inline in emitRelation; here we filter
+	// them out so they don't also appear above the relation as comments.
+	visibleComments := make([]string, 0, len(namespace.GetComments(metadata)))
+	for _, comment := range namespace.GetComments(metadata) {
+		if namespace.IsDescriptionMarkedComment(comment) {
+			continue
+		}
+		visibleComments = append(visibleComments, comment)
+	}
+
+	if len(visibleComments) > 0 {
 		sg.ensureBlankLineOrNewScope()
 	}
 
-	for _, comment := range namespace.GetComments(metadata) {
+	for _, comment := range visibleComments {
 		sg.appendComment(comment)
 	}
 }

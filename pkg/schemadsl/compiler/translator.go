@@ -423,6 +423,15 @@ func translateRelation(tctx *translationContext, relationNode *dslNode) (*core.R
 		return nil, err
 	}
 
+	// Optional `description "..."` clause from the DSL is attached as
+	// structured metadata so it survives compile→namespace→DSL round-trips.
+	// The predicate is absent when the user omitted the clause.
+	if description, err := relationNode.GetString(dslshape.NodeRelationPredicateDescription); err == nil && description != "" {
+		if err := namespace.SetDescription(relation, description); err != nil {
+			return nil, relationNode.Errorf("could not attach description on relation %s: %w", relationName, err)
+		}
+	}
+
 	if !tctx.skipValidate {
 		if err := protovalidate.Validate(relation); err != nil {
 			return nil, relationNode.Errorf("error in relation %s: %w", relationName, err)
