@@ -146,6 +146,9 @@ const (
 	// The allowed types for the relation.
 	NodeRelationPredicateAllowedTypes = "allowed-types"
 
+	// The optional human-readable description for the relation.
+	NodeRelationPredicateDescription = "relation-description"
+
 	//
 	// NodeTypeTypeReference
 	//

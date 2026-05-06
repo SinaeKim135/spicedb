@@ -71,6 +71,88 @@ func AddComment(metadata *core.Metadata, comment string) (*core.Metadata, error)
 	return metadata, nil
 }
 
+// descriptionMarker is the prefix stored on a DocComment metadata entry that
+// flags it as a structured `description "..."` clause from the DSL rather than
+// a free-form `// comment` above the relation. We piggy-back on DocComment so
+// that schemas continue to round-trip without any new proto/Any types.
+const descriptionMarker = "@@description: "
+
+// GetDescription returns the human-readable description attached to the given
+// relation, or "" if none was set.
+func GetDescription(relation *core.Relation) string {
+	if relation == nil || relation.Metadata == nil {
+		return ""
+	}
+	for _, msg := range relation.Metadata.MetadataMessage {
+		var dc iv1.DocComment
+		if err := msg.UnmarshalTo(&dc); err == nil {
+			if rest, ok := stripDescriptionMarker(dc.Comment); ok {
+				return rest
+			}
+		}
+	}
+	return ""
+}
+
+// SetDescription stores the description on the relation's metadata. Calling it
+// again replaces any prior description. Pass "" to clear.
+func SetDescription(relation *core.Relation, description string) error {
+	if relation == nil {
+		return nil
+	}
+	if relation.Metadata == nil {
+		if description == "" {
+			return nil
+		}
+		relation.Metadata = &core.Metadata{}
+	}
+
+	// Drop any existing description-marked DocComment so set is idempotent.
+	filtered := relation.Metadata.MetadataMessage[:0]
+	for _, msg := range relation.Metadata.MetadataMessage {
+		var dc iv1.DocComment
+		if err := msg.UnmarshalTo(&dc); err == nil {
+			if _, ok := stripDescriptionMarker(dc.Comment); ok {
+				continue
+			}
+		}
+		filtered = append(filtered, msg)
+	}
+	relation.Metadata.MetadataMessage = filtered
+
+	if description == "" {
+		return nil
+	}
+
+	var dc iv1.DocComment
+	dc.Comment = descriptionMarker + description
+	encoded, err := anypb.New(&dc)
+	if err != nil {
+		return err
+	}
+	relation.Metadata.MetadataMessage = append(relation.Metadata.MetadataMessage, encoded)
+	return nil
+}
+
+// IsDescriptionMarkedComment reports whether the given DocComment string was
+// emitted by SetDescription rather than written as a `//` comment by the user.
+// Used by the DSL generator to filter description carriers out of regular
+// comment emission.
+func IsDescriptionMarkedComment(comment string) bool {
+	_, ok := stripDescriptionMarker(comment)
+	return ok
+}
+
+func stripDescriptionMarker(comment string) (string, bool) {
+	if len(comment) < len(descriptionMarker) {
+		return "", false
+	}
+	if comment[:len(descriptionMarker)] != descriptionMarker {
+		return "", false
+	}
+	return comment[len(descriptionMarker):], true
+}
+
 // GetRelationKind returns the kind of the relation.
 func GetRelationKind(relation *core.Relation) iv1.RelationMetadata_RelationKind {
 	metadata := relation.Metadata
