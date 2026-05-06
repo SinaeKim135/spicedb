@@ -3,11 +3,14 @@ package v1
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 
 	"buf.build/go/protovalidate"
 	grpcvalidate "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/protovalidate"
 	"go.opentelemetry.io/otel"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 
@@ -119,6 +122,41 @@ func (ss *schemaServer) ReadSchema(ctx context.Context, _ *v1.ReadSchemaRequest)
 	}, nil
 }
 
+// dryRunMetadataKey is the gRPC metadata header (and HTTP header, after
+// gRPC-Gateway transcoding) that opts a single WriteSchema call into
+// validation-only mode. We don't add a field to v1.WriteSchemaRequest because
+// that proto lives in authzed-go and a wire-level change is heavier than this
+// PR warrants — a metadata header gives both gRPC and REST clients the same
+// switch with zero proto churn.
+const dryRunMetadataKey = "x-spicedb-dry-run"
+
+// dryRunImpactObjectsKey / dryRunImpactCaveatsKey are response trailer keys
+// the server sets when it served a dry-run, so the caller can confirm the
+// request was actually treated as dry-run (vs. silently fell through to a real
+// write because of a typo'd header) and read the impact stats without an
+// extra ReflectSchema round-trip.
+const (
+	dryRunResponseTrailerKey = "x-spicedb-was-dry-run"
+	dryRunImpactObjectsKey   = "x-spicedb-dry-run-object-definitions"
+	dryRunImpactCaveatsKey   = "x-spicedb-dry-run-caveat-definitions"
+)
+
+// isDryRunRequest returns true when the incoming gRPC metadata carries
+// x-spicedb-dry-run set to a truthy value. The check is case-insensitive on
+// both the header name (gRPC normalizes to lowercase) and the value
+// ("true"/"True"/"TRUE" all count).
+func isDryRunRequest(ctx context.Context) bool {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return false
+	}
+	values := md.Get(dryRunMetadataKey)
+	if len(values) == 0 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(values[0]), "true")
+}
+
 func (ss *schemaServer) WriteSchema(ctx context.Context, in *v1.WriteSchemaRequest) (*v1.WriteSchemaResponse, error) {
 	perfinsights.SetInContext(ctx, perfinsights.NoLabels)
 
@@ -153,6 +191,34 @@ func (ss *schemaServer) WriteSchema(ctx context.Context, in *v1.WriteSchemaReque
 	validated, err := shared.ValidateSchemaChanges(ctx, compiled, ss.caveatTypeSet, ss.additiveOnly, in.GetSchema())
 	if err != nil {
 		return nil, ss.rewriteError(ctx, err)
+	}
+
+	// Dry-run short-circuit: stop after compile + ValidateSchemaChanges so the
+	// caller gets the same parser/validation errors a real write would produce
+	// without committing anything to the datastore. We still announce the
+	// outcome via response trailers so REST callers (gRPC-Gateway translates
+	// trailers to HTTP trailers / response headers) can confirm the request
+	// was treated as dry-run and inspect the impact counts.
+	if isDryRunRequest(ctx) {
+		impactTrailer := metadata.Pairs(
+			dryRunResponseTrailerKey, "true",
+			dryRunImpactObjectsKey, strconv.Itoa(len(compiled.ObjectDefinitions)),
+			dryRunImpactCaveatsKey, strconv.Itoa(len(compiled.CaveatDefinitions)),
+		)
+		// SetTrailer is best-effort: if the call wasn't made through a gRPC
+		// stream that supports trailers, we still log the impact so it shows
+		// up in operator audit trails.
+		_ = grpc.SetTrailer(ctx, impactTrailer)
+
+		log.Ctx(ctx).Info().
+			Int("object_definitions", len(compiled.ObjectDefinitions)).
+			Int("caveat_definitions", len(compiled.CaveatDefinitions)).
+			Msg("dry-run schema validation succeeded; no datastore write performed")
+
+		// WrittenAt is intentionally nil — there is no revision to point at
+		// because nothing was committed. Callers that need a revision should
+		// re-issue the request without the dry-run header.
+		return &v1.WriteSchemaResponse{}, nil
 	}
 
 	revision, err := dl.ReadWriteTx(ctx, func(ctx context.Context, rwt datalayer.ReadWriteTransaction) error {

@@ -1,10 +1,13 @@
 package v1_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
@@ -1658,4 +1661,141 @@ func TestComputablePermissions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// withDryRun returns a context whose outgoing gRPC metadata opts the call into
+// the WriteSchema dry-run path. Used by the dry-run tests below.
+func withDryRun(t *testing.T) (context.Context, func()) {
+	t.Helper()
+	ctx := metadata.AppendToOutgoingContext(t.Context(), "x-spicedb-dry-run", "true")
+	return ctx, func() {}
+}
+
+// TestSchemaWriteDryRunValidatesWithoutCommitting is the headline behaviour
+// test for PR #6: a dry-run write must compile + validate the schema and
+// must NOT touch the datastore. After the dry-run the namespace should still
+// look untouched (ReadSchema returns NotFound on an empty datastore), and a
+// follow-up write WITHOUT the dry-run header must succeed exactly as before
+// (proves the dry-run side-channel didn't poison server state).
+func TestSchemaWriteDryRunValidatesWithoutCommitting(t *testing.T) {
+	conn, cleanup, _, _ := testserver.NewTestServer(t, 0, memdb.DisableGC, true, tf.EmptyDatastore)
+	t.Cleanup(cleanup)
+	client := v1.NewSchemaServiceClient(conn)
+
+	const schemaText = `definition example/user {}
+
+definition example/document {
+	relation viewer: example/user
+}`
+
+	// Pre-condition: empty datastore.
+	_, err := client.ReadSchema(t.Context(), &v1.ReadSchemaRequest{})
+	grpcutil.RequireStatus(t, codes.NotFound, err)
+
+	// Dry-run write — should succeed but not commit.
+	dryCtx, _ := withDryRun(t)
+	var trailer metadata.MD
+	dryResp, err := client.WriteSchema(dryCtx, &v1.WriteSchemaRequest{
+		Schema: schemaText,
+	}, grpc.Trailer(&trailer))
+	require.NoError(t, err, "dry-run with valid schema should succeed")
+	require.NotNil(t, dryResp)
+	require.Empty(t, dryResp.GetWrittenAt().GetToken(),
+		"dry-run must NOT return a revision token — nothing was committed")
+
+	// Server must announce the dry-run via response trailer so the client can
+	// distinguish a dry-run success from an accidental real write.
+	require.Equal(t, []string{"true"}, trailer.Get("x-spicedb-was-dry-run"),
+		"trailer must announce dry-run")
+	require.Equal(t, []string{"2"}, trailer.Get("x-spicedb-dry-run-object-definitions"),
+		"trailer must report 2 object definitions (user + document)")
+	require.Equal(t, []string{"0"}, trailer.Get("x-spicedb-dry-run-caveat-definitions"),
+		"trailer must report 0 caveat definitions")
+
+	// Side-effect free invariant: the datastore must still be empty after a
+	// dry-run. This is the V4 plan PR #6 "20% gap" check — TestBot can't
+	// trivially infer that dry-run leaves no trace.
+	_, err = client.ReadSchema(t.Context(), &v1.ReadSchemaRequest{})
+	grpcutil.RequireStatus(t, codes.NotFound, err)
+
+	// Equivalence: a real write of the same schema must succeed and produce
+	// the same result a normal caller would have seen.
+	realResp, err := client.WriteSchema(t.Context(), &v1.WriteSchemaRequest{
+		Schema: schemaText,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, realResp.GetWrittenAt().GetToken(),
+		"real write must produce a revision token")
+
+	readback, err := client.ReadSchema(t.Context(), &v1.ReadSchemaRequest{})
+	require.NoError(t, err)
+	require.Equal(t, schemaText, readback.SchemaText)
+}
+
+// TestSchemaWriteDryRunStillRejectsInvalidSchema confirms that the dry-run
+// path runs the same compile + ValidateSchemaChanges pipeline a real write
+// runs — operators rely on dry-run to surface errors they'd otherwise hit
+// in prod. If validation were skipped, dry-run would lull users into a
+// false sense of safety.
+func TestSchemaWriteDryRunStillRejectsInvalidSchema(t *testing.T) {
+	conn, cleanup, _, _ := testserver.NewTestServer(t, 0, memdb.DisableGC, true, tf.EmptyDatastore)
+	t.Cleanup(cleanup)
+	client := v1.NewSchemaServiceClient(conn)
+
+	dryCtx, _ := withDryRun(t)
+	_, err := client.WriteSchema(dryCtx, &v1.WriteSchemaRequest{
+		Schema: `invalid example/user {}`,
+	})
+	grpcutil.RequireStatus(t, codes.InvalidArgument, err)
+}
+
+// TestSchemaWriteDryRunBackwardCompatible verifies that omitting the
+// x-spicedb-dry-run header — and the metadata-FromIncomingContext path
+// generally — preserves the pre-PR write semantics. A plain WriteSchema
+// must still commit and produce a revision token, with no dry-run trailer.
+func TestSchemaWriteDryRunBackwardCompatible(t *testing.T) {
+	conn, cleanup, _, _ := testserver.NewTestServer(t, 0, memdb.DisableGC, true, tf.EmptyDatastore)
+	t.Cleanup(cleanup)
+	client := v1.NewSchemaServiceClient(conn)
+
+	var trailer metadata.MD
+	resp, err := client.WriteSchema(t.Context(), &v1.WriteSchemaRequest{
+		Schema: `definition example/user {}`,
+	}, grpc.Trailer(&trailer))
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.GetWrittenAt().GetToken(),
+		"plain write must produce a revision token")
+	require.Empty(t, trailer.Get("x-spicedb-was-dry-run"),
+		"plain write must NOT carry the dry-run trailer")
+
+	readback, err := client.ReadSchema(t.Context(), &v1.ReadSchemaRequest{})
+	require.NoError(t, err)
+	require.Equal(t, "definition example/user {}", readback.SchemaText)
+}
+
+// TestSchemaWriteDryRunHeaderCaseInsensitive confirms the parser handles
+// "true" / "True" / "TRUE" identically — gRPC normalizes header names but
+// values are caller-controlled, and operators routinely send TitleCase
+// values from REST clients.
+func TestSchemaWriteDryRunHeaderCaseInsensitive(t *testing.T) {
+	conn, cleanup, _, _ := testserver.NewTestServer(t, 0, memdb.DisableGC, true, tf.EmptyDatastore)
+	t.Cleanup(cleanup)
+	client := v1.NewSchemaServiceClient(conn)
+
+	for _, value := range []string{"true", "True", "TRUE", "  true  "} {
+		ctx := metadata.AppendToOutgoingContext(t.Context(), "x-spicedb-dry-run", value)
+		var trailer metadata.MD
+		resp, err := client.WriteSchema(ctx, &v1.WriteSchemaRequest{
+			Schema: `definition example/user {}`,
+		}, grpc.Trailer(&trailer))
+		require.NoError(t, err, "value=%q should be accepted as truthy", value)
+		require.Empty(t, resp.GetWrittenAt().GetToken(),
+			"value=%q should be treated as dry-run (no token)", value)
+		require.Equal(t, []string{"true"}, trailer.Get("x-spicedb-was-dry-run"),
+			"value=%q should set dry-run trailer", value)
+	}
+
+	// Datastore must still be empty after all the dry-runs above.
+	_, err := client.ReadSchema(t.Context(), &v1.ReadSchemaRequest{})
+	grpcutil.RequireStatus(t, codes.NotFound, err)
 }
