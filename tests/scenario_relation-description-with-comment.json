@@ -1,0 +1,54 @@
+[
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"schema\": \"definition user {}\\n\\ndefinition document {\\n\\t// owner of the doc\\n\\trelation viewer: user description \\\"Read access\\\"\\n}\"}",
+    "ResponseBody": "{\"writtenAt\": {}}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/schema/write",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-06T05:02:08.414Z",
+    "Scheme": "http"
+  },
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{}",
+    "ResponseBody": "{\"schemaText\": \"definition user {}\\n\\ndefinition document {\\n\\t// owner of the doc\\n\\trelation viewer: user description \\\"Read access\\\"\\n}\"}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/schema/read",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-06T05:02:08.414Z",
+    "Scheme": "http"
+  }
+]
