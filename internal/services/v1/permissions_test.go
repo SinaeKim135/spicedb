@@ -2790,3 +2790,110 @@ func TestBulkCheckCaveatContextCollision(t *testing.T) {
 		"the bad request should have a no permission result",
 	)
 }
+
+// TestCheckPermissionDenyHintWithoutTracing covers the headline scenario for
+// the deny-hint feature: a Notion-style support agent calls CheckPermission
+// without WithTracing=true and gets back a NO_PERMISSION verdict together
+// with a small DebugTrace that echoes the request and includes a
+// human-readable "Source" pointing at the most likely cause. This lets
+// first-line support diagnose access tickets without re-issuing the call
+// with full tracing.
+func TestCheckPermissionDenyHintWithoutTracing(t *testing.T) {
+	require := require.New(t)
+	conn, cleanup, _, revision := testserver.NewTestServer(t, testTimedeltas[0], memdb.DisableGC, true, tf.StandardDatastoreWithData)
+	t.Cleanup(cleanup)
+	client := v1.NewPermissionsServiceClient(conn)
+
+	// "missingrelation" is not granted any permission on masterplan in the
+	// standard fixture — exactly the support-ticket shape we want to
+	// diagnose.
+	resp, err := client.CheckPermission(t.Context(), &v1.CheckPermissionRequest{
+		Consistency: &v1.Consistency{
+			Requirement: &v1.Consistency_AtLeastAsFresh{
+				AtLeastAsFresh: zedtoken.MustNewFromRevisionForTesting(revision),
+			},
+		},
+		Resource:   obj("document", "masterplan"),
+		Permission: "view",
+		Subject:    sub("user", "missingrelation", ""),
+	})
+	require.NoError(err)
+	require.Equal(v1.CheckPermissionResponse_PERMISSIONSHIP_NO_PERMISSION, resp.Permissionship)
+
+	require.NotNil(resp.DebugTrace, "deny without WithTracing must still get a hint trace")
+	require.NotNil(resp.DebugTrace.Check, "hint trace must include a Check section")
+
+	// Echoed request fields let a support tool show "what was checked".
+	require.Equal("document", resp.DebugTrace.Check.Resource.GetObjectType())
+	require.Equal("masterplan", resp.DebugTrace.Check.Resource.GetObjectId())
+	require.Equal("view", resp.DebugTrace.Check.Permission)
+	require.Equal("user", resp.DebugTrace.Check.Subject.GetObject().GetObjectType())
+	require.Equal("missingrelation", resp.DebugTrace.Check.Subject.GetObject().GetObjectId())
+	require.Equal(v1.CheckDebugTrace_PERMISSIONSHIP_NO_PERMISSION, resp.DebugTrace.Check.Result)
+
+	// Source string carries the human-readable hint. We only assert on
+	// stable substrings so the wording can evolve without churning tests.
+	require.Contains(resp.DebugTrace.Check.Source, "deny:")
+	require.Contains(resp.DebugTrace.Check.Source, "user:missingrelation")
+	require.Contains(resp.DebugTrace.Check.Source, "document:masterplan")
+	require.Contains(resp.DebugTrace.Check.Source, "view")
+
+	// SchemaUsed is intentionally empty on the lightweight path — the full
+	// schema dump only ships when the caller opts in via WithTracing.
+	require.Empty(resp.DebugTrace.SchemaUsed)
+}
+
+// TestCheckPermissionDenyHintNotPopulatedOnAllow makes sure the deny-hint
+// helper doesn't fire on the success path. A HAS_PERMISSION result without
+// WithTracing must keep DebugTrace nil — adding bytes to every successful
+// response would silently bloat traffic for clients that never asked for
+// debug data.
+func TestCheckPermissionDenyHintNotPopulatedOnAllow(t *testing.T) {
+	require := require.New(t)
+	conn, cleanup, _, revision := testserver.NewTestServer(t, testTimedeltas[0], memdb.DisableGC, true, tf.StandardDatastoreWithData)
+	t.Cleanup(cleanup)
+	client := v1.NewPermissionsServiceClient(conn)
+
+	resp, err := client.CheckPermission(t.Context(), &v1.CheckPermissionRequest{
+		Consistency: &v1.Consistency{
+			Requirement: &v1.Consistency_AtLeastAsFresh{
+				AtLeastAsFresh: zedtoken.MustNewFromRevisionForTesting(revision),
+			},
+		},
+		Resource:   obj("document", "masterplan"),
+		Permission: "view",
+		Subject:    sub("user", "auditor", ""),
+	})
+	require.NoError(err)
+	require.Equal(v1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION, resp.Permissionship)
+	require.Nil(resp.DebugTrace, "allow path must not carry a hint trace")
+}
+
+// TestCheckPermissionDenyHintWithTracingPreservesFullTrace covers the
+// integration with the existing WithTracing path: when the caller opts into
+// a full trace the server still produces the rich tree (including
+// SchemaUsed and SubProblems), and the lightweight hint helper does NOT
+// overwrite it.
+func TestCheckPermissionDenyHintWithTracingPreservesFullTrace(t *testing.T) {
+	require := require.New(t)
+	conn, cleanup, _, revision := testserver.NewTestServer(t, testTimedeltas[0], memdb.DisableGC, true, tf.StandardDatastoreWithData)
+	t.Cleanup(cleanup)
+	client := v1.NewPermissionsServiceClient(conn)
+
+	resp, err := client.CheckPermission(t.Context(), &v1.CheckPermissionRequest{
+		Consistency: &v1.Consistency{
+			Requirement: &v1.Consistency_AtLeastAsFresh{
+				AtLeastAsFresh: zedtoken.MustNewFromRevisionForTesting(revision),
+			},
+		},
+		Resource:    obj("document", "masterplan"),
+		Permission:  "view",
+		Subject:     sub("user", "missingrelation", ""),
+		WithTracing: true,
+	})
+	require.NoError(err)
+	require.Equal(v1.CheckPermissionResponse_PERMISSIONSHIP_NO_PERMISSION, resp.Permissionship)
+	require.NotNil(resp.DebugTrace)
+	require.NotEmpty(resp.DebugTrace.SchemaUsed,
+		"full WithTracing path must keep SchemaUsed populated")
+}
