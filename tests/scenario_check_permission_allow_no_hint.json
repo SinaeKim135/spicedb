@@ -1,0 +1,80 @@
+[
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"schema\":\"definition user {}\\n\\ndefinition document {\\n  relation viewer: user\\n  permission view = viewer\\n}\"}",
+    "ResponseBody": "{\"writtenAt\":{\"token\":\"spicedb_written_schema\"}}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/schema/write",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-06T18:45:31.115Z",
+    "Scheme": "http"
+  },
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"updates\":[{\"operation\":\"OPERATION_TOUCH\",\"relationship\":{\"resource\":{\"objectType\":\"document\",\"objectId\":\"doc-allow-nohint-test\"},\"relation\":\"viewer\",\"subject\":{\"object\":{\"objectType\":\"user\",\"objectId\":\"user-with-allow-access\"}}}}]}",
+    "ResponseBody": "{\"writtenAt\":{\"token\":\"spicedb_written_rel\"}}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/relationships/write",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-06T18:45:31.115Z",
+    "Scheme": "http"
+  },
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"consistency\":{\"minimizeLatency\":true},\"resource\":{\"objectType\":\"document\",\"objectId\":\"doc-allow-nohint-test\"},\"permission\":\"view\",\"subject\":{\"object\":{\"objectType\":\"user\",\"objectId\":\"user-with-allow-access\"}}}",
+    "ResponseBody": "{\"permissionship\":\"PERMISSIONSHIP_HAS_PERMISSION\"}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/permissions/check",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-06T18:45:31.115Z",
+    "Scheme": "http"
+  }
+]
