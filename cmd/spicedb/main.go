@@ -18,6 +18,9 @@ import (
 	"github.com/authzed/spicedb/pkg/spiceerrors"
 )
 
+// main is the SpiceDB binary entrypoint: configures global state
+// (memory protection, logging, gRPC resolvers/balancers) before
+// dispatching to the cobra command tree.
 func main() {
 	memoryprotection.InitDefaultMemoryUsageProvider()
 
