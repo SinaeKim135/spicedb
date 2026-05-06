@@ -20,13 +20,27 @@ on:
       # Skyramp wiring
       - '.skyramp/**'
       - 'tests/**'
+  # Allow re-triggering the bot on demand by mentioning @skyramp-testbot in a
+  # PR comment (e.g. "@skyramp-testbot add the round-trip test"). Without this
+  # trigger the bot only runs on PR open/sync/reopen and will never see the
+  # mention — which is the situation that bit us on PR #3.
+  issue_comment:
+    types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.actor != 'skyramp-testbot[bot]' }}
 
 jobs:
   testbot:
+    # Run on every PR event. For comments, only run when the comment is on a
+    # PR (not a plain issue) and explicitly mentions @skyramp-testbot — this
+    # mirrors the ebikes-lwc reference workflow.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@skyramp-testbot'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
