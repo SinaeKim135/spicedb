@@ -20,13 +20,27 @@ on:
       # Skyramp wiring
       - '.skyramp/**'
       - 'tests/**'
+  # Allow re-triggering the bot on demand by mentioning @skyramp-testbot in a
+  # PR comment (e.g. "@skyramp-testbot add the round-trip test"). Without this
+  # trigger the bot only runs on PR open/sync/reopen and will never see the
+  # mention — which is the situation that bit us on PR #3.
+  issue_comment:
+    types: [created]
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && github.actor != 'skyramp-testbot[bot]' }}
 
 jobs:
   testbot:
+    # Run on every PR event. For comments, only run when the comment is on a
+    # PR (not a plain issue) and explicitly mentions @skyramp-testbot — this
+    # mirrors the ebikes-lwc reference workflow.
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@skyramp-testbot'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -46,6 +60,22 @@ jobs:
       - name: Start SpiceDB and stage preshared key
         run: |
           set -euo pipefail
+          # Force a fresh build from THIS PR's source.
+          #
+          # skipTargetTeardown: 'true' in the testbot action below keeps the
+          # previous run's container alive on the runner. start-spicedb.sh's
+          # fast-path (`curl /openapi.json`) then short-circuits the rebuild
+          # and the test executor talks to a stale binary — exactly the bug
+          # TestBot's HIGH issue on PR #3 reported (3 of 4 integration tests
+          # got HTTP 400 because the running SpiceDB was built from main and
+          # didn't recognize the new `description` keyword).
+          #
+          # Tearing the compose stack down here is cheap (no-op when nothing
+          # is running) and guarantees the next `up --build` reflects the PR
+          # diff. `2>/dev/null || true` keeps the workflow green on a clean
+          # runner where there is nothing to remove.
+          docker compose -f .skyramp/docker-compose.testbot.yaml down -v --remove-orphans 2>/dev/null || true
+
           # Build spicedb from PR source (slim memdb compose) and wait for
           # /openapi.json. start-spicedb.sh is idempotent — the action's
           # targetSetupCommand below re-invokes it as a no-op once healthy.
