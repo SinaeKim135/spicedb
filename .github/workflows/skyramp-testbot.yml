@@ -61,7 +61,7 @@ jobs:
           echo "::add-mask::${SKYRAMP_TEST_TOKEN}"
           echo "SKYRAMP_TEST_TOKEN=${SKYRAMP_TEST_TOKEN}" >> "${GITHUB_ENV}"
 
-      - uses: skyramp/testbot@v0.8.2
+      - uses: skyramp/testbot@v0.9.0
         env:
           SKYRAMP_TEST_TOKEN: ${{ env.SKYRAMP_TEST_TOKEN }}
         with:
