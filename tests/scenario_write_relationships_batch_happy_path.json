@@ -1,0 +1,54 @@
+[
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"schema\":\"definition user {}\\n\\ndefinition document {\\n  relation writer: user\\n}\"}",
+    "ResponseBody": "{\"writtenAt\":{\"token\":\"\"}}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/schema/write",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-07T02:55:13.088Z",
+    "Scheme": "http"
+  },
+  {
+    "Source": "192.168.65.1:39998",
+    "Destination": "localhost",
+    "RequestBody": "{\"updates\":[{\"operation\":\"OPERATION_CREATE\",\"relationship\":{\"resource\":{\"objectType\":\"document\",\"objectId\":\"doc1\"},\"relation\":\"writer\",\"subject\":{\"object\":{\"objectType\":\"user\",\"objectId\":\"user1\"}}}},{\"operation\":\"OPERATION_CREATE\",\"relationship\":{\"resource\":{\"objectType\":\"document\",\"objectId\":\"doc1\"},\"relation\":\"writer\",\"subject\":{\"object\":{\"objectType\":\"user\",\"objectId\":\"user2\"}}}},{\"operation\":\"OPERATION_CREATE\",\"relationship\":{\"resource\":{\"objectType\":\"document\",\"objectId\":\"doc1\"},\"relation\":\"writer\",\"subject\":{\"object\":{\"objectType\":\"user\",\"objectId\":\"user3\"}}}}]}",
+    "ResponseBody": "{\"writtenAt\":{\"token\":\"\"}}",
+    "RequestHeaders": {
+      "Content-Type": [
+        "application/json"
+      ],
+      "Authorization": [
+        "Bearer SKYRAMP_PLACEHOLDER_TOKEN"
+      ]
+    },
+    "ResponseHeaders": {
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Method": "POST",
+    "Path": "/v1/relationships/write",
+    "QueryParams": {},
+    "StatusCode": 200,
+    "Port": 8443,
+    "Timestamp": "2026-05-07T02:55:13.088Z",
+    "Scheme": "http"
+  }
+]
