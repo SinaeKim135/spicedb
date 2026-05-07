@@ -361,21 +361,30 @@ func (ps *permissionServer) WriteRelationships(ctx context.Context, req *v1.Writ
 
 	includesExpiresAt := false
 
-	// Check for duplicate updates and create the set of caveat names to load.
+	// Check for duplicate updates and validate per-update size limits.
+	//
+	// WriteRelationships is documented as an atomic ("all-or-nothing") batch:
+	// if any update in the request fails pre-validation here, OR if any
+	// update is rejected during the ReadWriteTx below, NONE of the updates
+	// are committed. Surface the failing update's 0-based position via the
+	// error so a Reddit-style moderator tool that submitted 100 ban tuples
+	// in one call can pinpoint exactly which row triggered the rollback —
+	// instead of having to re-scan its own input or dedupe client-side
+	// before each retry.
 	updateRelationshipSet := mapz.NewSet[string]()
-	for _, update := range req.Updates {
+	for i, update := range req.Updates {
 		// TODO(jschorr): Change to struct-based keys.
 		tupleStr := tuple.V1StringRelationshipWithoutCaveatOrExpiration(update.Relationship)
 		if !updateRelationshipSet.Add(tupleStr) {
 			return nil, ps.rewriteError(
 				ctx,
-				NewDuplicateRelationshipErr(update),
+				NewDuplicateRelationshipErr(update, i),
 			)
 		}
 		if proto.Size(update.Relationship.OptionalCaveat) > ps.config.MaxRelationshipContextSize {
 			return nil, ps.rewriteError(
 				ctx,
-				NewMaxRelationshipContextError(update, ps.config.MaxRelationshipContextSize),
+				NewMaxRelationshipContextError(update, ps.config.MaxRelationshipContextSize, i),
 			)
 		}
 

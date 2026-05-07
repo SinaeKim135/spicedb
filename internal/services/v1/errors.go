@@ -230,16 +230,27 @@ func (err PreconditionFailedError) GRPCStatus() *status.Status {
 type DuplicateRelationErrorshipError struct {
 	error
 	update *v1.RelationshipUpdate
+	// index is the position (0-based) of the offending update in the
+	// caller's WriteRelationships batch. Surfaced in the error message and
+	// the gRPC details map so migration / bulk-mutation tools can correlate
+	// the failure back to a specific row of their input without re-deriving
+	// it from the relationship string.
+	index int
 }
 
-// NewDuplicateRelationshipErr constructs a new invalid subject error.
-func NewDuplicateRelationshipErr(update *v1.RelationshipUpdate) DuplicateRelationErrorshipError {
+// NewDuplicateRelationshipErr constructs a new invalid subject error. `index`
+// is the 0-based position of `update` inside the caller's WriteRelationships
+// batch — included in the error so bulk callers can pinpoint exactly which
+// row triggered the rollback.
+func NewDuplicateRelationshipErr(update *v1.RelationshipUpdate, index int) DuplicateRelationErrorshipError {
 	return DuplicateRelationErrorshipError{
 		error: fmt.Errorf(
-			"found more than one update with relationship `%s` in this request; a relationship can only be specified in an update once per overall WriteRelationships request",
+			"atomic batch failed at index %d: relationship `%s` appears more than once in this WriteRelationships request; a relationship can only be specified in an update once per overall request",
+			index,
 			tuple.V1StringRelationshipWithoutCaveatOrExpiration(update.Relationship),
 		),
 		update: update,
+		index:  index,
 	}
 }
 
@@ -251,8 +262,11 @@ func (err DuplicateRelationErrorshipError) GRPCStatus() *status.Status {
 		spiceerrors.ForReason(
 			v1.ErrorReason_ERROR_REASON_UPDATES_ON_SAME_RELATIONSHIP,
 			map[string]string{
-				"definition_name": err.update.Relationship.Resource.ObjectType,
-				"relationship":    tuple.MustV1StringRelationship(err.update.Relationship),
+				"definition_name":         err.update.Relationship.Resource.ObjectType,
+				"relationship":            tuple.MustV1StringRelationship(err.update.Relationship),
+				"failed_index":            strconv.Itoa(err.index),
+				"operations_committed":    "0",
+				"atomic_batch_guarantee":  "all_or_nothing",
 			},
 		),
 	)
@@ -264,18 +278,29 @@ type ErrMaxRelationshipContextError struct {
 	error
 	update         *v1.RelationshipUpdate
 	maxAllowedSize int
+	// index is the 0-based position of the offending update inside the
+	// caller's WriteRelationships batch. See DuplicateRelationErrorshipError
+	// for rationale.
+	index int
 }
 
-// NewMaxRelationshipContextError constructs a new max relationship context error.
-func NewMaxRelationshipContextError(update *v1.RelationshipUpdate, maxAllowedSize int) ErrMaxRelationshipContextError {
+// NewMaxRelationshipContextError constructs a new max relationship context
+// error. `index` is the 0-based position of `update` inside the caller's
+// WriteRelationships batch — included so a bulk caller (e.g. a Reddit-style
+// moderator-action tool sending 100 ban tuples in one request) can pinpoint
+// the exact row that exceeded the caveat-context size limit instead of
+// scanning the whole batch.
+func NewMaxRelationshipContextError(update *v1.RelationshipUpdate, maxAllowedSize int, index int) ErrMaxRelationshipContextError {
 	return ErrMaxRelationshipContextError{
 		error: fmt.Errorf(
-			"provided relationship `%s` exceeded maximum allowed caveat size of %d",
+			"atomic batch failed at index %d: relationship `%s` exceeded maximum allowed caveat size of %d",
+			index,
 			tuple.V1StringRelationshipWithoutCaveatOrExpiration(update.Relationship),
 			maxAllowedSize,
 		),
 		update:         update,
 		maxAllowedSize: maxAllowedSize,
+		index:          index,
 	}
 }
 
@@ -287,9 +312,12 @@ func (err ErrMaxRelationshipContextError) GRPCStatus() *status.Status {
 		spiceerrors.ForReason(
 			v1.ErrorReason_ERROR_REASON_MAX_RELATIONSHIP_CONTEXT_SIZE,
 			map[string]string{
-				"relationship":     tuple.V1StringRelationshipWithoutCaveatOrExpiration(err.update.Relationship),
-				"max_allowed_size": strconv.Itoa(err.maxAllowedSize),
-				"context_size":     strconv.Itoa(proto.Size(err.update.Relationship)),
+				"relationship":           tuple.V1StringRelationshipWithoutCaveatOrExpiration(err.update.Relationship),
+				"max_allowed_size":       strconv.Itoa(err.maxAllowedSize),
+				"context_size":           strconv.Itoa(proto.Size(err.update.Relationship)),
+				"failed_index":           strconv.Itoa(err.index),
+				"operations_committed":   "0",
+				"atomic_batch_guarantee": "all_or_nothing",
 			},
 		),
 	)
